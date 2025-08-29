@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import io from 'socket.io-client';
@@ -21,7 +21,8 @@ const TOOLBAR_OPTIONS = [
 const Editor = () => {
   const { id: documentId } = useParams();
   const [socket, setSocket] = useState(null);
-  const [quill, setQuill] = useState(null);
+  const quillRef = useRef(null);
+  const [quillInstance, setQuillInstance] = useState(null);
   const [title, setTitle] = useState('Untitled Document');
 
   useEffect(() => {
@@ -34,36 +35,43 @@ const Editor = () => {
   }, []);
 
   useEffect(() => {
-    if (socket == null || quill == null) return;
+    if (quillRef.current) {
+      const editor = quillRef.current.getEditor();
+      setQuillInstance(editor);
+    }
+  }, [quillRef.current]);
+
+  useEffect(() => {
+    if (socket == null || quillInstance == null) return;
 
     socket.once('load-document', document => {
-      quill.setContents(document);
-      quill.enable();
+      quillInstance.setContents(document);
+      quillInstance.enable();
     });
 
     socket.emit('join-document', documentId);
-  }, [socket, quill, documentId]);
+  }, [socket, quillInstance, documentId]);
 
   useEffect(() => {
-    if (socket == null || quill == null) return;
+    if (socket == null || quillInstance == null) return;
 
     const interval = setInterval(() => {
       socket.emit('save-document', {
         documentId,
-        content: quill.getContents()
+        content: quillInstance.getContents()
       });
     }, SAVE_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
     };
-  }, [socket, quill, documentId]);
+  }, [socket, quillInstance, documentId]);
 
   useEffect(() => {
-    if (socket == null || quill == null) return;
+    if (socket == null || quillInstance == null) return;
 
     const handler = delta => {
-      quill.updateContents(delta);
+      quillInstance.updateContents(delta);
     };
 
     socket.on('receive-changes', handler);
@@ -71,22 +79,24 @@ const Editor = () => {
     return () => {
       socket.off('receive-changes', handler);
     };
-  }, [socket, quill]);
+  }, [socket, quillInstance]);
 
   useEffect(() => {
-    if (quill == null || socket == null) return;
+    if (quillInstance == null || socket == null) {
+      return;
+    }
 
     const handler = (delta, oldDelta, source) => {
       if (source !== 'user') return;
       socket.emit('send-changes', { delta, documentId });
     };
 
-    quill.on('text-change', handler);
+    quillInstance.on('text-change', handler);
 
     return () => {
-      quill.off('text-change', handler);
+      quillInstance.off('text-change', handler);
     };
-  }, [socket, quill, documentId]);
+  }, [socket, documentId, quillInstance]);
 
   useEffect(() => {
     const fetchDocument = async () => {
@@ -116,7 +126,9 @@ const Editor = () => {
         value=""
         onChange={() => {}}
         modules={{ toolbar: TOOLBAR_OPTIONS }}
-        ref={setQuill}
+        ref={(el) => {
+          quillRef.current = el;
+        }}
       />
     </div>
   );

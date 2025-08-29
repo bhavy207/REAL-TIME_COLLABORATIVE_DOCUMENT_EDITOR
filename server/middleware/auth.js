@@ -20,6 +20,7 @@ const auth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    console.error('Auth Middleware Error:', error);
     res.status(401).json({ error: 'Please authenticate.' });
   }
 };

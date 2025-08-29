@@ -1,9 +1,17 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const cors = require('cors');
 const http = require('http');
 const socketIo = require('socket.io');
-const cors = require('cors');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const Document = require('./models/Document'); // Import Document model
+
+// Import routes
+const authRoutes = require('./routes/auth');
+const documentRoutes = require('./routes/documents');
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
@@ -19,43 +27,31 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/collaborative-editor', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
-
-// Document Schema
-const documentSchema = new mongoose.Schema({
-  title: String,
-  content: String,
-  lastModified: { type: Date, default: Date.now }
-});
-
-const Document = mongoose.model('Document', documentSchema);
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/collaborative-editor')
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 // Socket.IO Connection
 io.on('connection', (socket) => {
   console.log('New client connected');
 
-  socket.on('join-document', async (documentId) => {
+  socket.on('join-document', (documentId) => {
     socket.join(documentId);
-    const document = await Document.findById(documentId);
-    if (document) {
-      socket.emit('load-document', document.content);
+    console.log(`User joined document: ${documentId}`);
+  });
+
+  socket.on('document-change', (delta) => {
+    socket.to(delta.documentId).emit('receive-changes', delta);
+  });
+
+  socket.on('save-document', async ({ documentId, content }) => {
+    try {
+      const stringifiedContent = JSON.stringify(content);
+      await Document.findByIdAndUpdate(documentId, { content: stringifiedContent, lastModified: new Date() });
+      console.log(`Document ${documentId} saved successfully via socket.`);
+    } catch (error) {
+      console.error(`Error saving document ${documentId} via socket:`, error);
     }
-  });
-
-  socket.on('send-changes', (delta) => {
-    socket.broadcast.to(delta.documentId).emit('receive-changes', delta);
-  });
-
-  socket.on('save-document', async (data) => {
-    await Document.findByIdAndUpdate(data.documentId, {
-      content: data.content,
-      lastModified: Date.now()
-    });
   });
 
   socket.on('disconnect', () => {
@@ -63,32 +59,15 @@ io.on('connection', (socket) => {
   });
 });
 
-// API Routes
-app.post('/api/documents', async (req, res) => {
-  try {
-    const document = new Document({
-      title: req.body.title || 'Untitled Document',
-      content: ''
-    });
-    await document.save();
-    res.json(document);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/documents', documentRoutes);
+
+app.get('/', (req, res) => {
+  res.send('Collaborative Document Editor API');
 });
 
-app.get('/api/documents/:id', async (req, res) => {
-  try {
-    const document = await Document.findById(req.params.id);
-    if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
-    }
-    res.json(document);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
